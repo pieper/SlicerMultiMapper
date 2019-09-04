@@ -1,3 +1,5 @@
+import math
+import numpy
 import os
 import unittest
 import vtk, qt, ctk, slicer
@@ -16,17 +18,16 @@ class MultiMapper(ScriptedLoadableModule):
   def __init__(self, parent):
     ScriptedLoadableModule.__init__(self, parent)
     self.parent.title = "MultiMapper" # TODO make this more human readable by adding spaces
-    self.parent.categories = ["Examples"]
+    self.parent.categories = ["Quantification"]
     self.parent.dependencies = []
-    self.parent.contributors = ["John Doe (AnyWare Corp.)"] # replace with "Firstname Lastname (Organization)"
-    self.parent.helpText = """
-This is an example of scripted loadable module bundled in an extension.
-It performs a simple thresholding on the input volume and optionally captures a screenshot.
+    self.parent.contributors = ["Steve Pieper (Isomics, Inc.)"] # replace with "Firstname Lastname (Organization)"
+    self.parent.helpText = """Tools for creating parametric maps from multidimensional MRI
 """
     self.parent.helpText += self.getDefaultModuleDocumentationLink()
     self.parent.acknowledgementText = """
-This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc.
-and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
+Supported in part by the Neuroimage Analysis Center (NAC) https://nac.spl.harvard.edu/
+
+NAC is a Biomedical Technology Resource Center supported by the National Institute of Biomedical Imaging and Bioengineering (NIBIB) (P41 EB015902). It was supported by the National Center for Research Resources (NCRR) (P41 RR13218) through December 2011.
 """ # replace with organization, grant and thanks.
 
 #
@@ -53,149 +54,272 @@ class MultiMapperWidget(ScriptedLoadableModuleWidget):
     # Layout within the dummy collapsible button
     parametersFormLayout = qt.QFormLayout(parametersCollapsibleButton)
 
-    #
-    # input volume selector
-    #
-    self.inputSelector = slicer.qMRMLNodeComboBox()
-    self.inputSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
-    self.inputSelector.selectNodeUponCreation = True
-    self.inputSelector.addEnabled = False
-    self.inputSelector.removeEnabled = False
-    self.inputSelector.noneEnabled = False
-    self.inputSelector.showHidden = False
-    self.inputSelector.showChildNodeTypes = False
-    self.inputSelector.setMRMLScene( slicer.mrmlScene )
-    self.inputSelector.setToolTip( "Pick the input to the algorithm." )
-    parametersFormLayout.addRow("Input Volume: ", self.inputSelector)
-
-    #
-    # output volume selector
-    #
-    self.outputSelector = slicer.qMRMLNodeComboBox()
-    self.outputSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
-    self.outputSelector.selectNodeUponCreation = True
-    self.outputSelector.addEnabled = True
-    self.outputSelector.removeEnabled = True
-    self.outputSelector.noneEnabled = True
-    self.outputSelector.showHidden = False
-    self.outputSelector.showChildNodeTypes = False
-    self.outputSelector.setMRMLScene( slicer.mrmlScene )
-    self.outputSelector.setToolTip( "Pick the output to the algorithm." )
-    parametersFormLayout.addRow("Output Volume: ", self.outputSelector)
-
-    #
-    # threshold value
-    #
-    self.imageThresholdSliderWidget = ctk.ctkSliderWidget()
-    self.imageThresholdSliderWidget.singleStep = 0.1
-    self.imageThresholdSliderWidget.minimum = -100
-    self.imageThresholdSliderWidget.maximum = 100
-    self.imageThresholdSliderWidget.value = 0.5
-    self.imageThresholdSliderWidget.setToolTip("Set threshold value for computing the output image. Voxels that have intensities lower than this value will set to zero.")
-    parametersFormLayout.addRow("Image threshold", self.imageThresholdSliderWidget)
-
-    #
-    # check box to trigger taking screen shots for later use in tutorials
-    #
-    self.enableScreenshotsFlagCheckBox = qt.QCheckBox()
-    self.enableScreenshotsFlagCheckBox.checked = 0
-    self.enableScreenshotsFlagCheckBox.setToolTip("If checked, take screen shots for tutorials. Use Save Data to write them to disk.")
-    parametersFormLayout.addRow("Enable Screenshots", self.enableScreenshotsFlagCheckBox)
-
-    #
-    # Apply Button
-    #
-    self.applyButton = qt.QPushButton("Apply")
-    self.applyButton.toolTip = "Run the algorithm."
-    self.applyButton.enabled = False
-    parametersFormLayout.addRow(self.applyButton)
-
-    # connections
-    self.applyButton.connect('clicked(bool)', self.onApplyButton)
-    self.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onSelect)
-    self.outputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onSelect)
+    # no UI right now
 
     # Add vertical spacer
     self.layout.addStretch(1)
 
-    # Refresh Apply button state
-    self.onSelect()
-
   def cleanup(self):
     pass
 
-  def onSelect(self):
-    self.applyButton.enabled = self.inputSelector.currentNode() and self.outputSelector.currentNode()
-
-  def onApplyButton(self):
-    logic = MultiMapperLogic()
-    enableScreenshotsFlag = self.enableScreenshotsFlagCheckBox.checked
-    imageThreshold = self.imageThresholdSliderWidget.value
-    logic.run(self.inputSelector.currentNode(), self.outputSelector.currentNode(), imageThreshold, enableScreenshotsFlag)
 
 #
 # MultiMapperLogic
 #
 
 class MultiMapperLogic(ScriptedLoadableModuleLogic):
-  """This class should implement all the actual
-  computation done by your module.  The interface
-  should be such that other python code can import
-  this class and make use of the functionality without
-  requiring an instance of the Widget.
-  Uses ScriptedLoadableModuleLogic base class, available at:
-  https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
+  """
+  Methods to convert multiple mdMRI volumes into parametric maps.
+
+  WIP: currently hard-coded for first example case
+
+
+  For testing:
+
+slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.tableFromExperiment(); mml.plotsFromTable()
+
+
+slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.mapFromCrosshair()
+
+slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.segmentWithKMeans()
+
   """
 
-  def hasImageData(self,volumeNode):
-    """This is an example logic method that
-    returns true if the passed in volume
-    node has valid image data
+  def __init__(self):
+
+    # estimated from 2HG m/z at 129
+    self.intensities = {
+        "R1" :  100.,
+        "R2" :   30.,
+        "R4" : 1350.,
+        "R5" :  210.,
+    }
+
+  def standardizedDistance(self, labelPair):
+    """calculate the pairwise distance between two sample
+    vectors and standardize by the variance.  If the
+    sample vector dimensions are uncorrelated, then
+    this is the Mahalanobis distance.
     """
-    if not volumeNode:
-      logging.debug('hasImageData failed: no volume node')
-      return False
-    if volumeNode.GetImageData() is None:
-      logging.debug('hasImageData failed: no image data in volume node')
-      return False
-    return True
+    samplePair = [self.samples[label] for label in labelPair]
+    accumulation = 0
+    for name in self.names:
+      difference = samplePair[1][name] - samplePair[0][name]
+      accumulation += (difference * difference) / (self.variances[name] * self.variances[name])
+    return math.sqrt(accumulation)
 
-  def isValidInputOutputData(self, inputVolumeNode, outputVolumeNode):
-    """Validates if the output is not the same as input
-    """
-    if not inputVolumeNode:
-      logging.debug('isValidInputOutputData failed: no input volume node defined')
-      return False
-    if not outputVolumeNode:
-      logging.debug('isValidInputOutputData failed: no output volume node defined')
-      return False
-    if inputVolumeNode.GetID()==outputVolumeNode.GetID():
-      logging.debug('isValidInputOutputData failed: input and output volume is the same. Create a new volume for output to avoid this error.')
-      return False
-    return True
+  def standardizedDistanceBetweenIndices(self, index0, index1):
+    """Return standardized distance at an index point in array space"""
+    accumulation = 0
+    for nodeName in self.nodes:
+      if nodeName in self.arrays:
+        a = self.arrays[nodeName]
+        difference = a[index0] - a[index1]
+        accumulation += (difference * difference) / (self.variances[nodeName] * self.variances[nodeName])
+    return math.sqrt(accumulation)
 
-  def run(self, inputVolume, outputVolume, imageThreshold, enableScreenshots=0):
-    """
-    Run the actual algorithm
-    """
+  def volumeStatistics(self):
+    self.nodes = slicer.util.getNodes('dtd_covariance_*')
+    self.arrays = {}
+    self.means = {}
+    self.variances = {}
+    for nodeName in self.nodes:
+      a = slicer.util.arrayFromVolume(self.nodes[nodeName])
+      if len(a.shape) == 3: # skip the _u_rgb volume
+        self.arrays[nodeName] = a
+        self.means[nodeName] = a.mean()
+        self.variances[nodeName] = a.var()
+    self.names = [name for name in self.arrays]
 
-    if not self.isValidInputOutputData(inputVolume, outputVolume):
-      slicer.util.errorDisplay('Input volume is the same as output volume. Choose a different output volume.')
-      return False
+  def indexAt(self,node,ras):
+    """return the index for the node at the given RAS"""
+    rasH = [1.,]*4
+    rasH[:3] = ras
+    rasToIJKMatrix = vtk.vtkMatrix4x4()
+    node.GetRASToIJKMatrix(rasToIJKMatrix)
+    ijkH = [0.,]*4
+    rasToIJKMatrix.MultiplyPoint(rasH, ijkH)
+    ijk = [int(round(element)) for element in ijkH[:3]]
+    ijk.reverse()
+    index = tuple(ijk)
+    return(index)
 
-    logging.info('Processing started')
+  def sampleAtRAS(self,node,ras):
+    """return the array sample value for the node at the given RAS"""
+    index = self.indexAt(node,ras)
+    return self.arrays[node.GetName()][index]
 
-    # Compute the thresholded output volume using the Threshold Scalar Volume CLI module
-    cliParams = {'InputVolume': inputVolume.GetID(), 'OutputVolume': outputVolume.GetID(), 'ThresholdValue' : imageThreshold, 'ThresholdType' : 'Above'}
-    cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None, cliParams, wait_for_completion=True)
+  def tableFromExperiment(self):
+    """Makes a table of volume statistics and volume samples at fiducial point"""
 
-    # Capture screenshot
-    if enableScreenshots:
-      self.takeScreenshot('MultiMapperTest-Start','MyScreenshot',-1)
+    self.volumeStatistics();
 
-    logging.info('Processing completed')
+    fiducials = slicer.util.getNode('ResearchMassSpecPoints')
 
-    return True
+    self.samples = {}
+    for fiducialIndex in range(fiducials.GetNumberOfFiducials()):
+      label = fiducials.GetNthFiducialLabel(fiducialIndex)
+      self.samples[label] = {}
+      ras = [0.,]*3
+      fiducials.GetNthFiducialPosition(fiducialIndex, ras)
+      for nodeName in self.names:
+        node = self.nodes[nodeName]
+        self.samples[label][nodeName] = self.sampleAtRAS(node, ras)
+    self.labels = [label for label in self.samples]
+
+    self.table = {}
+    for i in range(0, len(self.labels)):
+      for j in range(i+1, len(self.labels)):
+        labelI, labelJ = self.labels[i], self.labels[j]
+        datapointLabel = labelI + "_" + labelJ
+        self.table[datapointLabel] = {}
+        self.table[datapointLabel]['labelI'] = labelI
+        self.table[datapointLabel]['labelJ'] = labelJ
+        self.table[datapointLabel]['qti_distance'] = self.standardizedDistance([labelI, labelJ])
+        self.table[datapointLabel]['intensity_difference'] = abs(self.intensities[labelI] - self.intensities[labelJ])
+    return(self.table)
+
+  def plotFromValues(self, title, axis_titles, datapoints):
+    """Create a mrml Chart from given data"""
+
+    print(title, axis_titles, datapoints)
+
+    plotSeriesNodes = []
+    for datapoint in datapoints:
+      datapointLabel = datapoint[0]
+
+      tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode")
+      table = tableNode.GetTable()
+
+      arrX = vtk.vtkFloatArray()
+      arrX.SetName("labelIndex")
+      table.AddColumn(arrX)
+
+      arrY1 = vtk.vtkFloatArray()
+      arrY1.SetName("qti_distance")
+      table.AddColumn(arrY1)
+
+      arrY2 = vtk.vtkFloatArray()
+      arrY2.SetName("intensity_difference")
+      table.AddColumn(arrY2)
+
+      # Fill in the table with the values
+
+      table.SetNumberOfRows(1)
+      table.SetValue(0, 0, 0)
+      table.SetValue(0, 1, datapoint[1])
+      table.SetValue(0, 2, datapoint[2])
+
+      # Create plot series node
+
+      plotSeriesNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode", datapointLabel)
+      plotSeriesNode.SetAndObserveTableNodeID(tableNode.GetID())
+      plotSeriesNode.SetXColumnName("qti_distance")
+      plotSeriesNode.SetYColumnName("intensity_difference")
+      plotSeriesNode.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+      plotSeriesNode.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleNone)
+      plotSeriesNode.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleSquare)
+      plotSeriesNode.SetUniqueColor()
+      plotSeriesNodes.append(plotSeriesNode)
+
+    # Create plot chart node
+
+    plotChartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode")
+    for plotSeriesNode in plotSeriesNodes:
+      plotChartNode.AddAndObservePlotSeriesNodeID(plotSeriesNode.GetID())
+    plotChartNode.SetTitle(title)
+    plotChartNode.SetName(title)
+    plotChartNode.SetXAxisTitle(axis_titles[0])
+    plotChartNode.SetYAxisTitle(axis_titles[1])
+
+    # Switch to a layout that contains a plot view to create a plot widget
+
+    layoutManager = slicer.app.layoutManager()
+    layoutWithPlot = slicer.modules.plots.logic().GetLayoutWithPlot(layoutManager.layout)
+    layoutManager.setLayout(layoutWithPlot)
+
+    # Select chart in plot view
+
+    plotWidget = layoutManager.plotWidget(0)
+    plotViewNode = plotWidget.mrmlPlotViewNode()
+    plotViewNode.SetPlotChartNodeID(plotChartNode.GetID())
+
+  def plotsFromTable(self):
+    """Create a set of plots for different aspects of the table values"""
+    contrastNames = list(self.nodes)
+    scalarNames = list(filter(lambda n: not n.endswith('rgb'), contrastNames))
+
+    for scalarName in scalarNames:
+      datapoints = []
+      for i in range(len(self.table.keys())):
+        datapointLabel = list(self.table.keys())[i]
+        self.table[datapointLabel]
+        labelI = self.table[datapointLabel]['labelI']
+        labelJ = self.table[datapointLabel]['labelJ']
+        valueI = self.samples[labelI][scalarName]
+        valueJ = self.samples[labelJ][scalarName]
+        scalarDifference = abs(valueJ -valueI)
+        datapoints.append([datapointLabel, scalarDifference, self.table[datapointLabel]['intensity_difference']])
+
+      scalarLabel = scalarName[len('dtd_covariance_'):]
+      self.plotFromValues(
+        title = f'2HG Difference by {scalarLabel}',
+        axis_titles = [f'Difference of {scalarLabel}', "Difference in 2HG m/z"],
+        datapoints = datapoints)
+
+
+  def mapFromCrosshair(self, targetNode=None):
+    """Create a distance map based on the current location of the crosshair node"""
+
+    self.volumeStatistics()
+
+    if targetNode is None:
+      targetNode = slicer.vtkSlicerVolumesLogic().CloneVolume(slicer.mrmlScene, self.nodes['dtd_covariance_MD'], 'distanceVolume')
+
+    crosshairNode = slicer.util.getNode('vtkMRMLCrosshairNodedefault')
+    crosshairRAS = crosshairNode.GetCrosshairRAS()
+    crosshairIndex = self.indexAt(targetNode, crosshairRAS)
+
+    print(f'RAS {crosshairRAS}')
+    for nodeName in self.names:
+      node = self.nodes[nodeName]
+      sample = self.sampleAtRAS(node, crosshairRAS)
+      print(f'{nodeName}: {sample}')
+
+    targetArray = slicer.util.arrayFromVolume(targetNode)
+
+    for element in numpy.ndenumerate(targetArray):
+      index = element[0]
+      distance = self.standardizedDistanceBetweenIndices(index, crosshairIndex)
+      targetArray[index] = distance
+
+    targetArray = slicer.util.updateVolumeFromArray(targetNode, targetArray)
+
+  def segmentWithKMeans(self, targetSegmentationNode=None):
+    """Use KMeans algorithm to segment using volumes"""
+
+    self.volumeStatistics()
+
+    if targetSegmentationNode is None:
+      targetSegmentationNode = slicer.vtkSlicerVolumesLogic().CreateAndAddLabelVolume(slicer.mrmlScene, self.nodes['dtd_covariance_MD'], 'KMeans from QTI')
+      targetSegmentationNode.CreateDefaultDisplayNodes()
+      targetSegmentationNode.GetDisplayNode().SetAndObserveColorNodeID('vtkMRMLColorTableNodeLabels')
+    targetArray = slicer.util.arrayFromVolume(targetSegmentationNode)
+
+    trainingShape = (targetArray.flatten().shape[0], len(self.arrays.keys()))
+    self.trainingArray = numpy.ndarray(trainingShape)
+
+    index = 0
+    for key in self.arrays.keys():
+      self.trainingArray.T[index] = self.arrays[key].flatten()
+      index += 1
+
+    from sklearn.cluster import KMeans
+    self.model = KMeans().fit(self.trainingArray)
+
+    print(self.model.labels_)
+
+    targetArray[:] = self.model.labels_.reshape(targetArray.shape)
 
 
 class MultiMapperTest(ScriptedLoadableModuleTest):
@@ -217,30 +341,10 @@ class MultiMapperTest(ScriptedLoadableModuleTest):
     self.test_MultiMapper1()
 
   def test_MultiMapper1(self):
-    """ Ideally you should have several levels of tests.  At the lowest level
-    tests should exercise the functionality of the logic with different inputs
-    (both valid and invalid).  At higher levels your tests should emulate the
-    way the user would interact with your code and confirm that it still works
-    the way you intended.
-    One of the most important features of the tests is that it should alert other
-    developers when their changes will have an impact on the behavior of your
-    module.  For example, if a developer removes a feature that you depend on,
-    your test should break so they know that the feature is needed.
+    """
+    Placeholder test
     """
 
     self.delayDisplay("Starting the test")
-    #
-    # first, get some data
-    #
-    import SampleData
-    SampleData.downloadFromURL(
-      nodeNames='FA',
-      fileNames='FA.nrrd',
-      uris='http://slicer.kitware.com/midas3/download?items=5767',
-      checksums='SHA256:12d17fba4f2e1f1a843f0757366f28c3f3e1a8bb38836f0de2a32bb1cd476560')
-    self.delayDisplay('Finished with download and loading')
 
-    volumeNode = slicer.util.getNode(pattern="FA")
-    logic = MultiMapperLogic()
-    self.assertIsNotNone( logic.hasImageData(volumeNode) )
     self.delayDisplay('Test passed!')
