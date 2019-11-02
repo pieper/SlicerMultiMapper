@@ -1,6 +1,8 @@
+import json
 import math
 import numpy
 import os
+import random
 import unittest
 import vtk, qt, ctk, slicer
 from slicer.ScriptedLoadableModule import *
@@ -76,12 +78,19 @@ class MultiMapperLogic(ScriptedLoadableModuleLogic):
 
   For testing:
 
+setup:
+slicer.util.pip_install('sklearn')
+
 slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.tableFromExperiment(); mml.plotsFromTable()
 
 
 slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.mapFromCrosshair()
 
 slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.segmentWithKMeans()
+
+slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.parallelCoordinates()
+
+
 
   """
 
@@ -315,11 +324,98 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
       index += 1
 
     from sklearn.cluster import KMeans
-    self.model = KMeans().fit(self.trainingArray)
+    self.model = KMeans(n_clusters = 3).fit(self.trainingArray)
 
     print(self.model.labels_)
 
     targetArray[:] = self.model.labels_.reshape(targetArray.shape)
+
+  def parallelCoordinatesPureD3(self):
+    """Use parallel axes to explore parameter space
+
+    See: http://syntagmatic.github.io/parallel-coordinates/
+
+    Note also experimented with vtk version, but it has fewer features
+    and performance is not any better in practice.
+
+    https://vtk.org/Wiki/VTK/Examples/Python/Infovis/ParallelCoordinatesExtraction
+
+    """
+
+    self.volumeStatistics()
+
+    fa = self.arrays['dtd_covariance_FA']
+    indices = numpy.where(fa != 0)
+
+    samples = {}
+    for key in self.arrays.keys():
+      samples[key] = self.arrays[key][indices]
+
+    dataToPlot = []
+    for index in range(len(samples['dtd_covariance_FA'])):
+      indexData = {}
+      for key in self.arrays.keys():
+        scalarLabel = key[len('dtd_covariance_'):]
+        indexData[scalarLabel] = samples[key][index]
+      dataToPlot.append(indexData)
+
+    dataToPlotString = json.dumps(dataToPlot)
+
+    modulePath = os.path.dirname(slicer.modules.multimapper.path)
+    resourceFilePath = os.path.join(modulePath, "Resources", "parallel-template.html")
+    html = open(resourceFilePath).read().replace("%%dataToPlot%%", dataToPlotString)
+
+    self.webWidget = slicer.qSlicerWebWidget()
+    self.webWidget.size = qt.QSize(1024,512)
+    self.webWidget.setHtml(html)
+    self.webWidget.show()
+
+    open('/tmp/data.html', 'w').write(html)
+
+  def parallelCoordinatesParCoords(self,sampleSize=1000):
+    """Use parallel axes to explore parameter space
+
+    See: http://syntagmatic.github.io/parallel-coordinates/
+    https://github.com/BigFatDog/parcoords-es
+
+    Note also experimented with vtk version, but it has fewer features
+    and performance is not any better in practice.
+
+    https://vtk.org/Wiki/VTK/Examples/Python/Infovis/ParallelCoordinatesExtraction
+
+    """
+
+    self.volumeStatistics()
+
+    fa = self.arrays['dtd_covariance_FA']
+    indices = numpy.where(fa != 0)
+
+    samples = {}
+    for key in self.arrays.keys():
+      samples[key] = self.arrays[key][indices]
+
+    dataToPlot = []
+    randomSample = random.sample(range(len(samples['dtd_covariance_FA'])), sampleSize)
+    for index in randomSample:
+      indexData = {'index' : index}
+      for key in self.arrays.keys():
+        scalarLabel = key[len('dtd_covariance_'):]
+        indexData[scalarLabel] = samples[key][index]
+      dataToPlot.append(indexData)
+
+    dataToPlotString = json.dumps(dataToPlot)
+
+    modulePath = os.path.dirname(slicer.modules.multimapper.path)
+    resourceFilePath = os.path.join(modulePath, "Resources", "ParCoords-template.html")
+    html = open(resourceFilePath).read().replace("%%dataToPlot%%", dataToPlotString)
+
+    self.webWidget = slicer.qSlicerWebWidget()
+    self.webWidget.size = qt.QSize(1024,768)
+    self.webWidget.setHtml(html)
+    self.webWidget.show()
+
+    # save for debugging
+    open('/tmp/data.html', 'w').write(html)
 
 
 class MultiMapperTest(ScriptedLoadableModuleTest):

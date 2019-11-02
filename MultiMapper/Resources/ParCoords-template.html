@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+
+<link rel="stylesheet"" type="text/css" href="https://cdn.jsdelivr.net/npm/parcoord-es@2.2.10/dist/parcoords.css">
+
+<style>
+* {
+  font: 12px sans-serif;
+}
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/parcoord-es@2.2.10/dist/parcoords.standalone.js"></script>
+
+<body>
+
+<div id="chart" class="parcoords" style="width:100%;height:700px"></div>
+
+<p>Sample from QTI study</p>
+
+<script>
+
+const dataToPlot = %%dataToPlot%%;
+// TODO: pass in color by orientation info 
+//const dataColors = %%dataColors%%;
+
+const colorFunction = function(dataObject) {
+  // TODO: use color table
+  return ("rgba(0,200,50,0.4)")
+}
+
+var parcoords = ParCoords()("#chart")
+  .data(dataToPlot)
+  .mode("queue")
+  .color(colorFunction)
+  //.smoothness(0.05)
+  .render()
+  .createAxes()
+;
+
+parcoords
+  .brushMode("1D-axes-multi")
+//  .brushMode("2D-strums")
+//  .brushMode("angular")
+//  .brushedColor("#00a")
+  .alphaOnBrushed(0.2)
+//  .reorderable(true)
+;
+
+parcoords.on("brush", brushedData => {
+  // TODO: highlight pixels in slicer
+})
+
+</script>
+
+</body>
