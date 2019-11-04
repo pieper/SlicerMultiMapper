@@ -103,6 +103,12 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
         "R4" : 1350.,
         "R5" :  210.,
     }
+    self.observerObjectIDPairs = []
+
+  def __del__(self):
+    print("logic is destructing")
+    for object_, id_ in self.observerObjectIDPairs:
+      object_.RemoveObserver(id_)
 
   def standardizedDistance(self, labelPair):
     """calculate the pairwise distance between two sample
@@ -390,29 +396,53 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
     fa = self.arrays['dtd_covariance_FA']
     indices = numpy.where(fa != 0)
 
+    ijkCoordinates = numpy.transpose(indices)
+    ijkToRAS = vtk.vtkMatrix4x4()
+    slicer.util.getNode('dtd_covariance_FA').GetIJKToRASMatrix(ijkToRAS)
+    rasCoordinates = []
+
     samples = {}
     for key in self.arrays.keys():
       samples[key] = self.arrays[key][indices]
 
     dataToPlot = []
     randomSample = random.sample(range(len(samples['dtd_covariance_FA'])), sampleSize)
+    sampleIndex = 0
     for index in randomSample:
-      indexData = {'index' : index}
+      indexData = {'sampleIndex' : sampleIndex}
       for key in self.arrays.keys():
         scalarLabel = key[len('dtd_covariance_'):]
         indexData[scalarLabel] = samples[key][index]
       dataToPlot.append(indexData)
+      ijk = [*numpy.flip(numpy.transpose(indices)[index]),1]
+      rasCoordinates.append(ijkToRAS.MultiplyPoint(ijk))
+      sampleIndex += 1
 
     dataToPlotString = json.dumps(dataToPlot)
+    rasCoordinatesString = json.dumps(rasCoordinates)
 
     modulePath = os.path.dirname(slicer.modules.multimapper.path)
     resourceFilePath = os.path.join(modulePath, "Resources", "ParCoords-template.html")
-    html = open(resourceFilePath).read().replace("%%dataToPlot%%", dataToPlotString)
+    html = open(resourceFilePath).read()
+    html = html.replace("%%dataToPlot%%", dataToPlotString)
+    html = html.replace("%%rasCoordinates%%", rasCoordinatesString)
 
     self.webWidget = slicer.qSlicerWebWidget()
     self.webWidget.size = qt.QSize(1024,768)
     self.webWidget.setHtml(html)
     self.webWidget.show()
+
+    def crosshairCallback(observer,eventID):
+      crosshairNode = slicer.mrmlScene.GetFirstNodeByClass('vtkMRMLCrosshairNode')
+      ras = [0,]*3
+      crosshairNode.GetCursorPositionRAS(ras)
+      print(ras)
+      # TODO: update selector ranges based on QTI statistics
+
+    crosshairNode = slicer.mrmlScene.GetFirstNodeByClass('vtkMRMLCrosshairNode')
+    event = vtk.vtkCommand.ModifiedEvent
+    id_ = crosshairNode.AddObserver(event, crosshairCallback)
+    self.observerObjectIDPairs.append((crosshairNode, id_))
 
     # save for debugging
     open('/tmp/data.html', 'w').write(html)

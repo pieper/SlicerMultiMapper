@@ -20,6 +20,7 @@
 <script>
 
 const dataToPlot = %%dataToPlot%%;
+const rasCoordinates = %%rasCoordinates%%;
 // TODO: pass in color by orientation info 
 //const dataColors = %%dataColors%%;
 
@@ -28,7 +29,12 @@ const colorFunction = function(dataObject) {
   return ("rgba(0,200,50,0.4)")
 }
 
-var parcoords = ParCoords()("#chart")
+const userConfig = {
+  markedLineWidth: 5,
+  markedShadowColor: "#888",
+}
+
+var parcoords = ParCoords(userConfig)("#chart")
   .data(dataToPlot)
   .mode("queue")
   .color(colorFunction)
@@ -42,12 +48,26 @@ parcoords
 //  .brushMode("2D-strums")
 //  .brushMode("angular")
 //  .brushedColor("#00a")
-  .alphaOnBrushed(0.2)
+  .alphaOnBrushed(0.1)
 //  .reorderable(true)
 ;
 
+parcoords.ctx.marked
+
 parcoords.on("brush", brushedData => {
   // TODO: highlight pixels in slicer
+  parcoords.clear('marked');
+  if (brushedData.length > 0) {
+    parcoords.mark([brushedData[0]]);
+    if (window.slicerPython) {
+      window.slicerPython.evalPython(`
+ras = ${rasCoordinates[brushedData[0].sampleIndex]}
+crosshairNode = slicer.mrmlScene.GetFirstNodeByClass('vtkMRMLCrosshairNode')
+crosshairNode.SetCrosshairRAS(*ras[:3])
+slicer.modules.markups.logic().JumpSlicesToLocation(*ras[:3], True)
+      `);
+    }
+  }
 })
 
 </script>
