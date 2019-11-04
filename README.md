@@ -1,6 +1,7 @@
 # SlicerMultiMapper
 Tools for creating parametric maps from multidimensional MRI
 
+[parcoords demo](https://pieper.github.io/SlicerMultiMapper/demos/parallel-plot/)
 
 ## Thanks
 
