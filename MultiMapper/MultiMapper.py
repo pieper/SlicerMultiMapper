@@ -61,6 +61,8 @@ class MultiMapperWidget(ScriptedLoadableModuleWidget):
     # Add vertical spacer
     self.layout.addStretch(1)
 
+    self.logic = MultiMapperLogic()
+
   def cleanup(self):
     pass
 
@@ -88,7 +90,7 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
 
 slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.segmentWithKMeans()
 
-slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.parallelCoordinates()
+slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.parallelCoordinatesParCoords()
 
 
 
@@ -409,7 +411,7 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
     randomSample = random.sample(range(len(samples['dtd_covariance_FA'])), sampleSize)
     sampleIndex = 0
     for index in randomSample:
-      indexData = {'sampleIndex' : sampleIndex}
+      indexData = {}
       for key in self.arrays.keys():
         scalarLabel = key[len('dtd_covariance_'):]
         indexData[scalarLabel] = samples[key][index]
@@ -446,6 +448,37 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
 
     # save for debugging
     open('/tmp/data.html', 'w').write(html)
+
+  def segmentFromExtents(self, ranges):
+    """Use ranges to segment using volumes
+       Extents will typically come from ParCoords callback
+    """
+
+    self.volumeStatistics()
+
+    segmentationName = 'Label from QTI Extents'
+    try:
+      targetLabelmapNode = slicer.util.getNode(segmentationName+'*')
+    except slicer.util.MRMLNodeNotFoundException:
+      targetLabelmapNode = slicer.vtkSlicerVolumesLogic().CreateAndAddLabelVolume(slicer.mrmlScene, self.nodes['dtd_covariance_MD'], segmentationName)
+      targetLabelmapNode.CreateDefaultDisplayNodes()
+      targetLabelmapNode.GetDisplayNode().SetAndObserveColorNodeID('vtkMRMLColorTableNodeLabels')
+      slicer.util.setSliceViewerLayers(label=targetLabelmapNode.GetID())
+    targetArray = slicer.util.arrayFromVolume(targetLabelmapNode)
+    targetArray = numpy.ones_like(targetArray)
+
+    for rangeKey in ranges.keys():
+      keyArray = self.arrays["dtd_covariance_" + rangeKey]
+      keyMask = numpy.zeros_like(keyArray)
+      keyExtents = ranges[rangeKey]
+      if len(keyExtents) > 0:
+        for keyRange in keyExtents:
+          upper,lower = keyRange['selection']['scaled']
+          indices = numpy.where(numpy.logical_and(keyArray >= lower, keyArray <= upper))
+          keyMask[indices] = 1
+        targetArray = targetArray * keyMask
+    slicer.targetArray = targetArray
+    slicer.util.updateVolumeFromArray(targetLabelmapNode, targetArray)
 
 
 class MultiMapperTest(ScriptedLoadableModuleTest):
