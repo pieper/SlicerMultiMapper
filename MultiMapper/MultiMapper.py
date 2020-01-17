@@ -45,6 +45,10 @@ class MultiMapperWidget(ScriptedLoadableModuleWidget):
     ScriptedLoadableModuleWidget.setup(self)
 
     # Instantiate and connect widgets ...
+    self.qtiDemoButton = qt.QPushButton("Run mdMRI Explorer")
+    self.layout.addWidget(self.qtiDemoButton)
+    self.qtiDemoButton.connect('clicked()', self.qtiDemo)
+
 
     #
     # Parameters Area
@@ -56,6 +60,7 @@ class MultiMapperWidget(ScriptedLoadableModuleWidget):
     # Layout within the dummy collapsible button
     parametersFormLayout = qt.QFormLayout(parametersCollapsibleButton)
 
+
     # no UI right now
 
     # Add vertical spacer
@@ -65,6 +70,10 @@ class MultiMapperWidget(ScriptedLoadableModuleWidget):
 
   def cleanup(self):
     pass
+
+  def qtiDemo(self):
+    self.mml = MultiMapperLogic()
+    self.mml.parallelCoordinatesSegmentation()
 
 
 #
@@ -90,7 +99,9 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
 
 slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.segmentWithKMeans()
 
-slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.parallelCoordinatesParCoords()
+slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.parallelCoordinatesParCoords_RandomSample()
+
+slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = MultiMapper.MultiMapperLogic(); mml.parallelCoordinatesSegmentation()
 
 
 
@@ -380,7 +391,107 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
 
     open('/tmp/data.html', 'w').write(html)
 
-  def parallelCoordinatesParCoords(self,sampleSize=1000):
+  def parallelCoordinatesSegmentation(self, segmentationNode=None, labelmapNode=None):
+    """
+    Like parallelCoordinatesParCoords_RandomSample below, but
+    parcoords plot created from segmentation
+    """
+
+    self.volumeStatistics()
+
+    if not segmentationNode:
+      try:
+        segmentationNode = slicer.util.getNode('Segmentation')
+      except slicer.util.MRMLNodeNotFoundException:
+        pass
+    if not segmentationNode:
+      print("need a segmentation")
+      slicer.util.selectModule("SegmentEditor")
+      return
+    if not labelmapNode:
+      try:
+        labelmapNode = slicer.util.getNode('Segmentation-labelmap')
+      except slicer.util.MRMLNodeNotFoundException:
+        labelmapNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLabelMapVolumeNode')
+        labelmapNode.SetName("Segmentation-labelmap")
+    segmentIDs = vtk.vtkStringArray()
+    segmentationNode.GetSegmentation().GetSegmentIDs(segmentIDs)
+    slicer.modules.segmentations.logic().ExportSegmentsToLabelmapNode(
+                                            segmentationNode,
+                                            segmentIDs,
+                                            labelmapNode,
+                                            self.nodes['dtd_covariance_FA'])
+    labelArray = slicer.util.arrayFromVolume(labelmapNode)
+
+    # list of non-zero segments in the labelmap
+    segmentIndices = list(numpy.unique(labelArray))[1:]
+
+    # data colors to match the segmentation colors to pass to js
+    segmentation = segmentationNode.GetSegmentation()
+    dataColors = [ [0,0,0] ]
+    for colorNumber in range(len(segmentIndices)):
+      dataColor = segmentation.GetNthSegment(colorNumber).GetColor()
+      dataColors.append(dataColor)
+
+    # make individual sample lines for parallel coordinates
+    ijkToRAS = vtk.vtkMatrix4x4()
+    labelmapNode.GetIJKToRASMatrix(ijkToRAS)
+    rasCoordinates = []
+    dataToPlot = []
+    for segmentIndex in segmentIndices:
+      # one data sample from each array per labeled voxel
+      coordinates = numpy.transpose(numpy.where(labelArray == segmentIndex))
+      self._coordinates = coordinates
+      samples = {}
+      for key in self.arrays.keys():
+        samples[key] = []
+        for coordinate in coordinates:
+          self._array = self.arrays[key]
+          samples[key].append(self.arrays[key][coordinate[0]][coordinate[1]][coordinate[2]])
+      for coordinateNumber in range(len(coordinates)):
+        indexData = {}
+        indexData['segmentIndex'] = int(segmentIndex)
+        for key in self.arrays.keys():
+          scalarLabel = key[len('dtd_covariance_'):]
+          indexData[scalarLabel] = samples[key][coordinateNumber]
+        dataToPlot.append(indexData)
+        ijkw = [*numpy.flip(coordinates)[coordinateNumber],1]
+        ijkw = [*numpy.flip(coordinates)[coordinateNumber],1]
+        rasCoordinate = ijkToRAS.MultiplyPoint(ijkw)
+        rasCoordinates.append(rasCoordinate)
+
+    dataColorsString = json.dumps(dataColors)
+    dataToPlotString = json.dumps(dataToPlot)
+    rasCoordinatesString = json.dumps(rasCoordinates)
+
+    modulePath = os.path.dirname(slicer.modules.multimapper.path)
+    resourceFilePath = os.path.join(modulePath, "Resources", "ParCoords-SEG-template.html")
+    html = open(resourceFilePath).read()
+    html = html.replace("%%dataColors%%", dataColorsString)
+    html = html.replace("%%dataToPlot%%", dataToPlotString)
+    html = html.replace("%%rasCoordinates%%", rasCoordinatesString)
+
+    self.webWidget = slicer.qSlicerWebWidget()
+    self.webWidget.size = qt.QSize(1024,768)
+    self.webWidget.setHtml(html)
+    self.webWidget.show()
+
+    def crosshairCallback(observer,eventID):
+      crosshairNode = slicer.mrmlScene.GetFirstNodeByClass('vtkMRMLCrosshairNode')
+      ras = [0,]*3
+      crosshairNode.GetCursorPositionRAS(ras)
+      print(ras)
+      # TODO: update selector ranges based on QTI statistics
+
+    crosshairNode = slicer.mrmlScene.GetFirstNodeByClass('vtkMRMLCrosshairNode')
+    event = vtk.vtkCommand.ModifiedEvent
+    id_ = crosshairNode.AddObserver(event, crosshairCallback)
+    self.observerObjectIDPairs.append((crosshairNode, id_))
+
+    # save for debugging
+    open('/tmp/data.html', 'w').write(html)
+
+  def parallelCoordinatesParCoords_RandomSample(self,sampleSize=1000):
     """Use parallel axes to explore parameter space
 
     See: http://syntagmatic.github.io/parallel-coordinates/
@@ -452,10 +563,15 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
   def segmentFromExtents(self, ranges):
     """Use ranges to segment using volumes
        Extents will typically come from ParCoords callback
+       (the call actually comes from Resources/ParCoordsSegmentation-template.html)
     """
 
     self.volumeStatistics()
 
+    #
+    # create targetArray to point at labelmap
+    # (create labemap if needed to match dtd_covariance_MD)
+    #
     segmentationName = 'Label from QTI Extents'
     try:
       targetLabelmapNode = slicer.util.getNode(segmentationName+'*')
@@ -467,7 +583,16 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
     targetArray = slicer.util.arrayFromVolume(targetLabelmapNode)
     targetArray = numpy.ones_like(targetArray)
 
+    #
+    # make a key mask which is 1 for each image
+    # where the QTI signal is in the range
+    # and the FA is non-zero, then update
+    # the segmentation
+    #
     for rangeKey in ranges.keys():
+      key = "dtd_covariance_" + rangeKey
+      if not key in self.arrays:
+        continue
       keyArray = self.arrays["dtd_covariance_" + rangeKey]
       keyMask = numpy.zeros_like(keyArray)
       keyExtents = ranges[rangeKey]
@@ -477,6 +602,8 @@ slicer.util.reloadScriptedModule('MultiMapper'); import MultiMapper; mml = Multi
           indices = numpy.where(numpy.logical_and(keyArray >= lower, keyArray <= upper))
           keyMask[indices] = 1
         targetArray = targetArray * keyMask
+    brainMask = numpy.clip(numpy.ceil(self.arrays["dtd_covariance_FA"]), 0, 1)
+    targetArray = targetArray * brainMask
     slicer.targetArray = targetArray
     slicer.util.updateVolumeFromArray(targetLabelmapNode, targetArray)
 
